@@ -1,0 +1,25 @@
+version: 2
+
+models:
+  - name: bronze_yellow_tripdata
+    description: >
+      Landing parquet files loaded as-is into Iceberg (s3://<bucket>/bronze-duck/).
+      Column names are lower-cased; values and types are left as delivered.
+      Incremental by file: only new landing files, or files whose S3 last-modified time
+      changed, are read. A re-delivered file replaces its earlier rows.
+    columns:
+      - name: _source_file
+        description: Full S3 path of the landing file the row came from.
+        data_tests: [not_null]
+      - name: _source_row_number
+        description: 0-based position of the row inside its landing file.
+        data_tests: [not_null]
+      - name: _source_modified_at
+        description: S3 last-modified time of the landing file when it was loaded.
+      - name: _source_period
+        description: First day of the month in the file name (yellow_tripdata_YYYY_MM).
+      - name: _batch_id
+        description: dbt invocation id of the run that loaded the file.
+        data_tests: [not_null]
+      - name: _ingested_at
+        description: When the row was written to bronze.

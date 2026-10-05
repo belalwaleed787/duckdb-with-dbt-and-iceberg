@@ -1,0 +1,47 @@
+version: 2
+
+models:
+  - name: silver_yellow_trips
+    description: >
+      Cleaned yellow taxi trips (s3://<bucket>/silver-duck/): snake_case names, proper
+      types, money as DECIMAL(10,2), exact duplicates removed, and only rows that pass
+      every data-quality rule. Partitioned by pickup month.
+    columns:
+      - name: trip_id
+        description: yyyymm of the source file * 10^8 + row number inside that file.
+        data_tests: [unique, not_null]
+      - name: pickup_at
+        data_tests: [not_null]
+      - name: dropoff_at
+        data_tests: [not_null]
+      - name: pickup_location_id
+        data_tests: [not_null]
+      - name: dropoff_location_id
+        data_tests: [not_null]
+      - name: passenger_count
+        description: NULL when the meter reported 0 or more than 6 passengers, or nothing.
+      - name: rate_code_id
+        description: 99 (unknown) when the meter reported none.
+      - name: fare_amount
+        data_tests: [not_null]
+      - name: total_amount
+        data_tests: [not_null]
+
+  - name: silver_yellow_trips_rejected
+    description: Bronze rows that failed a silver rule; _reject_reason is the first rule broken.
+    columns:
+      - name: _reject_reason
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - duplicate
+                  - unknown_source_period
+                  - missing_timestamp
+                  - pickup_outside_file_month
+                  - invalid_duration
+                  - invalid_distance
+                  - implausible_speed
+                  - invalid_amount
+                  - unknown_location

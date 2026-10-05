@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.duckdb
+*.duckdb.wal
+*.duckdb.tmp/
+nyc_taxi/target/
+nyc_taxi/logs/
+nyc_taxi/dbt_packages/
+nyc_taxi/.user.yml
+nyc_taxi/data/

@@ -1,0 +1,35 @@
+name: nyc_taxi
+version: "1.0.0"
+config-version: 2
+profile: nyc_taxi
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+clean-targets: ["target", "logs"]
+
+vars:
+  # Raw NYC TLC yellow taxi parquet files (one file per month).
+  landing_glob: "{{ env_var('LANDING_GLOB', 's3://nyc-test-iceberg/landing/yellow_taxi/*.parquet') }}"
+
+  # Silver cleaning thresholds. Rows that break a rule go to silver_yellow_trips_rejected.
+  min_trip_duration_minutes: 1
+  max_trip_duration_hours: 6
+  max_trip_distance_miles: 500
+  max_avg_speed_mph: 80
+  max_fare_amount: 2000
+
+models:
+  nyc_taxi:
+    # Every model is an Iceberg table in the Glue catalog that profiles.yml attaches as "lakehouse".
+    # Table location = <location_root>/<model name>. Non-prod targets write under <LAKEHOUSE_ROOT>/<target>/.
+    +database: lakehouse
+    bronze:
+      +schema: nyc_bronze_duck
+      +location_root: "{{ env_var('LAKEHOUSE_ROOT', 's3://nyc-test-iceberg') }}/{{ '' if target.name == 'prod' else target.name ~ '/' }}bronze-duck"
+    silver:
+      +schema: nyc_silver_duck
+      +location_root: "{{ env_var('LAKEHOUSE_ROOT', 's3://nyc-test-iceberg') }}/{{ '' if target.name == 'prod' else target.name ~ '/' }}silver-duck"
+    gold:
+      +schema: nyc_gold_duck
+      +location_root: "{{ env_var('LAKEHOUSE_ROOT', 's3://nyc-test-iceberg') }}/{{ '' if target.name == 'prod' else target.name ~ '/' }}gold-duck"

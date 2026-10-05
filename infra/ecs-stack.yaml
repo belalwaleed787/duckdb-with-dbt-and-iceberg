@@ -1,0 +1,183 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  On-demand ECS Fargate task for the NYC taxi lakehouse (dbt + DuckDB writing Iceberg tables
+  to S3 through the Glue Data Catalog). There is no schedule: start runs with scripts/run_on_ecs.ps1.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: nyc-taxi-duckdb-dbt
+    Description: Name for the ECR repository, ECS cluster, task definition, roles and log group
+  BucketName:
+    Type: String
+    Default: nyc-test-iceberg
+    Description: Bucket with landing/ and the bronze-duck/, silver-duck/, gold-duck/ folders
+  ImageTag:
+    Type: String
+    Default: latest
+  TaskCpu:
+    Type: String
+    Default: "4096"
+    AllowedValues: ["1024", "2048", "4096", "8192", "16384"]
+    Description: CPU units (1024 = 1 vCPU)
+  TaskMemory:
+    Type: String
+    Default: "16384"
+    Description: Memory in MiB (must be a valid Fargate combination with TaskCpu)
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Public subnets (tasks get a public IP to reach S3, Glue, ECR and CloudWatch)
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+
+Resources:
+  Repository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Ref ProjectName
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EmptyOnDelete: true
+      LifecyclePolicy:
+        LifecyclePolicyText: >-
+          {"rules": [{"rulePriority": 1, "description": "Keep the 10 most recent images",
+          "selection": {"tagStatus": "any", "countType": "imageCountMoreThan", "countNumber": 10},
+          "action": {"type": "expire"}}]}
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${ProjectName}
+      RetentionInDays: !Ref LogRetentionDays
+
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Ref ProjectName
+      CapacityProviders: [FARGATE, FARGATE_SPOT]
+
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-execution
+      Description: Lets ECS pull the image from ECR and write logs
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-task
+      Description: Used by dbt/DuckDB inside the container
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: lakehouse-access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ListBucket
+                Effect: Allow
+                Action: [s3:ListBucket, s3:GetBucketLocation]
+                Resource: !Sub arn:aws:s3:::${BucketName}
+              - Sid: ReadLanding
+                Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub arn:aws:s3:::${BucketName}/landing/*
+              - Sid: ReadWriteLakehouseFolders
+                Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject, s3:AbortMultipartUpload]
+                Resource:
+                  - !Sub arn:aws:s3:::${BucketName}/bronze-duck/*
+                  - !Sub arn:aws:s3:::${BucketName}/silver-duck/*
+                  - !Sub arn:aws:s3:::${BucketName}/gold-duck/*
+              - Sid: ReadGlueCatalog
+                Effect: Allow
+                Action: [glue:GetCatalog, glue:GetDatabase, glue:GetDatabases, glue:GetTable, glue:GetTables]
+                Resource:
+                  - !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:catalog
+                  - !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:database/*
+                  - !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:table/*/*
+              - Sid: WriteLakehouseDatabases
+                Effect: Allow
+                Action: [glue:CreateDatabase, glue:CreateTable, glue:UpdateTable, glue:DeleteTable]
+                Resource:
+                  - !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:catalog
+                  - !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:database/nyc_bronze_duck
+                  - !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:database/nyc_silver_duck
+                  - !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:database/nyc_gold_duck
+                  - !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:table/nyc_bronze_duck/*
+                  - !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:table/nyc_silver_duck/*
+                  - !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:table/nyc_gold_duck/*
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${ProjectName}-task
+      GroupDescription: Outbound-only access for the pipeline task
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Ref ProjectName
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: !Ref TaskCpu
+      Memory: !Ref TaskMemory
+      RuntimePlatform:
+        CpuArchitecture: X86_64
+        OperatingSystemFamily: LINUX
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: dbt
+          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ProjectName}:${ImageTag}
+          Essential: true
+          Environment:
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            - Name: LAKEHOUSE_ROOT
+              Value: !Sub s3://${BucketName}
+            - Name: LANDING_GLOB
+              Value: !Sub s3://${BucketName}/landing/yellow_taxi/*.parquet
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: run
+
+Outputs:
+  RepositoryUri:
+    Value: !GetAtt Repository.RepositoryUri
+  ClusterName:
+    Value: !Ref Cluster
+  TaskDefinition:
+    Value: !Ref TaskDefinition
+  ContainerName:
+    Value: dbt
+  SecurityGroupId:
+    Value: !Ref SecurityGroup
+  SubnetIds:
+    Value: !Join [",", !Ref SubnetIds]
+  LogGroupName:
+    Value: !Ref LogGroup

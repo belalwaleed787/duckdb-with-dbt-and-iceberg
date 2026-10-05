@@ -1,0 +1,65 @@
+nyc_taxi:
+  target: prod
+  outputs:
+    prod: &lakehouse
+      type: duckdb
+      # Local DuckDB file = scratch space for staging tables.
+      # All bronze/silver/gold tables live in the attached Iceberg catalog below.
+      path: "{{ env_var('DUCKDB_PATH', 'nyc_taxi.duckdb') }}"
+      schema: main
+      threads: "{{ env_var('DBT_THREADS', '4') | int }}"
+      keep_open: true
+
+      extensions:
+        - httpfs
+        - aws
+        - iceberg
+
+      settings:
+        # The container entrypoint sets this to 60% of the container's memory.
+        memory_limit: "{{ env_var('DUCKDB_MEMORY_LIMIT', '4GB') }}"
+        # Large INSERT/CTAS statements use far less memory when DuckDB may reorder rows.
+        preserve_insertion_order: false
+
+      secrets:
+        # Standard AWS credential chain: env vars, ~/.aws, ECS task role, EC2 instance profile.
+        - type: s3
+          provider: credential_chain
+          region: "{{ env_var('AWS_REGION', 'us-east-1') }}"
+          refresh: auto
+
+      attach:
+        # AWS Glue Data Catalog through its Iceberg REST endpoint (':' = this account's default catalog).
+        - path: "{{ env_var('GLUE_CATALOG_ID', ':') }}"
+          alias: lakehouse
+          type: iceberg
+          options:
+            endpoint_type: glue
+            # Glue rejects DROP TABLE with purge; the materializations clean up files themselves.
+            purge_requested: "false"
+            # Delete data files written by a transaction that fails to commit.
+            remove_files_on_delete: "true"
+
+      plugins:
+        # Registers iceberg_purge_location(), used when a table is rebuilt from scratch.
+        - module: iceberg_helpers
+          config:
+            region: "{{ env_var('AWS_REGION', 'us-east-1') }}"
+            purge_allowed_prefixes:
+              - "{{ env_var('LAKEHOUSE_ROOT', 's3://nyc-test-iceberg') }}/bronze-duck/"
+              - "{{ env_var('LAKEHOUSE_ROOT', 's3://nyc-test-iceberg') }}/silver-duck/"
+              - "{{ env_var('LAKEHOUSE_ROOT', 's3://nyc-test-iceberg') }}/gold-duck/"
+
+    # Same pipeline in isolation: Glue databases dev_nyc_*_duck, files under <LAKEHOUSE_ROOT>/dev/.
+    # Its purge allow-list only covers dev/, so a dev run can never delete prod files.
+    dev:
+      <<: *lakehouse
+      schema: dev
+      plugins:
+        - module: iceberg_helpers
+          config:
+            region: "{{ env_var('AWS_REGION', 'us-east-1') }}"
+            purge_allowed_prefixes:
+              - "{{ env_var('LAKEHOUSE_ROOT', 's3://nyc-test-iceberg') }}/dev/bronze-duck/"
+              - "{{ env_var('LAKEHOUSE_ROOT', 's3://nyc-test-iceberg') }}/dev/silver-duck/"
+              - "{{ env_var('LAKEHOUSE_ROOT', 's3://nyc-test-iceberg') }}/dev/gold-duck/"

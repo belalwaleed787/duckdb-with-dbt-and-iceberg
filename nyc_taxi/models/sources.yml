@@ -1,0 +1,43 @@
+version: 2
+
+sources:
+  - name: landing
+    description: Raw NYC TLC trip record files exactly as they land in S3.
+    tables:
+      - name: yellow_tripdata
+        description: >
+          Monthly yellow taxi parquet files named yellow_tripdata_YYYY_MM.parquet
+          (or YYYY-MM). Location is set by the LANDING_GLOB environment variable.
+        meta:
+          external_location: "{{ var('landing_glob') }}"
+
+  # Small lookup CSVs shipped inside the image (reference/). DuckDB reads them directly,
+  # so any model can be built on its own, without running `dbt seed` first.
+  - name: reference
+    description: NYC TLC lookups (data dictionary codes and taxi zones).
+    tables:
+      - name: taxi_zone_lookup
+        description: https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv (header renamed to snake_case)
+        meta:
+          external_location: "read_csv('{{ env_var('DBT_PROJECT_DIR', '.') }}/reference/taxi_zone_lookup.csv', header = true)"
+        columns:
+          - name: location_id
+            data_tests: [unique, not_null]
+      - name: vendors
+        meta:
+          external_location: "read_csv('{{ env_var('DBT_PROJECT_DIR', '.') }}/reference/vendors.csv', header = true)"
+        columns:
+          - name: vendor_id
+            data_tests: [unique, not_null]
+      - name: rate_codes
+        meta:
+          external_location: "read_csv('{{ env_var('DBT_PROJECT_DIR', '.') }}/reference/rate_codes.csv', header = true)"
+        columns:
+          - name: rate_code_id
+            data_tests: [unique, not_null]
+      - name: payment_types
+        meta:
+          external_location: "read_csv('{{ env_var('DBT_PROJECT_DIR', '.') }}/reference/payment_types.csv', header = true)"
+        columns:
+          - name: payment_type_id
+            data_tests: [unique, not_null]

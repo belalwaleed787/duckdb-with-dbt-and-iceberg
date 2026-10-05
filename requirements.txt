@@ -1,0 +1,6 @@
+dbt-core==1.12.5
+dbt-duckdb==1.11.0
+duckdb==1.5.6
+boto3==1.43.108
+# DuckDB needs numpy to register the Python UDF used by plugins/iceberg_helpers.py
+numpy==2.5.3
