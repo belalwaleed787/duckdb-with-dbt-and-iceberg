@@ -5,6 +5,12 @@ lakehouse of **Apache Iceberg** tables. **dbt** orchestrates the SQL, **DuckDB**
 and the tables are registered in the **AWS Glue Data Catalog**, so Athena (or any other
 Glue-aware Iceberg engine) can query them.
 
+![Architecture: laptop scripts, ECR, the ECS Fargate task, the S3 lakehouse folders, the Glue catalog and Athena, plus the landing → bronze → silver → gold data flow](docs/architecture.png)
+
+How it compares with the earlier Glue/Spark + Step Functions implementation
+([NYC_aws_iceberg_project](https://github.com/belalwaleed787/NYC_aws_iceberg_project)):
+[docs/glue-vs-duckdb-comparison.md](docs/glue-vs-duckdb-comparison.md).
+
 ```
 s3://nyc-test-iceberg/landing/yellow_taxi/*.parquet          raw monthly files (input)
         │  bronze: only new or re-delivered files, values untouched
@@ -100,6 +106,8 @@ With an AWS profile other than `default`, add `-e AWS_PROFILE=<name>`.
 ## Run on AWS (ECR + ECS Fargate)
 
 `infra/ecs-stack.yaml` (CloudFormation) holds the whole AWS setup. There is **no schedule**; runs start only when you ask.
+To do everything below in the AWS web console instead of PowerShell, follow
+[docs/run-from-aws-console.md](docs/run-from-aws-console.md).
 
 | Resource | Name |
 |---|---|
@@ -183,6 +191,9 @@ scripts/deploy_ecs.ps1                                create/update the AWS setu
 scripts/push_to_ecr.ps1 | .sh                         build + push the image to ECR
 scripts/run_on_ecs.ps1                                start one run on ECS Fargate and follow its logs
 infra/ecs-stack.yaml                                  ECR, ECS cluster + task definition, IAM roles, security group, logs
+docs/architecture.png                                 architecture diagram
+docs/glue-vs-duckdb-comparison.md                     this project vs the earlier Glue/Spark version
+docs/run-from-aws-console.md                          run, watch and query the pipeline from the AWS console
 docs/laptop-vs-ecs.md                                 laptop vs ECS Fargate: speed, network, cost, reliability, security
 nyc_taxi/                                             dbt project
   dbt_project.yml, profiles.yml                       layers -> Glue databases + S3 folders; DuckDB/Glue connection

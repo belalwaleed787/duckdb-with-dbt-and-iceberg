@@ -8,3 +8,18 @@ nyc_taxi/logs/
 nyc_taxi/dbt_packages/
 nyc_taxi/.user.yml
 nyc_taxi/data/
+
+# Local machine and editor settings (contain local paths)
+.vscode/mcp.json
+.claude/
+.kilo/
+
+# Credentials and local environment
+.env
+.env.*
+*.pem
+.aws/
+
+# Python virtual environments
+.venv/
+venv/
